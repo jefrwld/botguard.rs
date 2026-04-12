@@ -1,0 +1,8 @@
+[package]
+name = "botguard"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+pingora = { version = "0.8", features = ["lb"] }
+async-trait = "0.1"

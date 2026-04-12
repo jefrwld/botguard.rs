@@ -1,0 +1,10 @@
+# Claude Code
+CLAUDE.md
+
+# Rust
+target/
+Cargo.lock
+
+# Nix
+result
+result-*
