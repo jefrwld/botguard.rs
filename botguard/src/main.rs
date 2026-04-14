@@ -8,8 +8,12 @@ fn main() {
 
     let proxy = BotGuardProxy;
     let mut proxy_service = http_proxy_service(&server.configuration, proxy);
+
     proxy_service.add_tcp("0.0.0.0:8080");
 
+    proxy_service
+        .add_tls("0.0.0.0:8443", "certs/cert.pem", "certs/key.pem")
+        .unwrap();
     server.add_service(proxy_service);
     server.run_forever();
 }
