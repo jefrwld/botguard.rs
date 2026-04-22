@@ -6,3 +6,5 @@ edition = "2021"
 [dependencies]
 pingora = { version = "0.8", features = ["lb", "openssl"] }
 async-trait = "0.1"
+md5 = "0.7"
+openssl = "0.10"
