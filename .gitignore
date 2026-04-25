@@ -1,6 +1,9 @@
 # Claude Code
 CLAUDE.md
 
+# Privater Lernpfad (gehört nur mir)
+learning/
+
 # Rust
 target/
 Cargo.lock
