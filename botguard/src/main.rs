@@ -5,13 +5,28 @@ use pingora::prelude::*;
 use pingora::proxy::{ProxyHttp, Session};
 use pingora::tls::ext;
 use pingora::tls::pkey::{PKey, Private};
-use pingora::tls::ssl::{ClientHelloResponse, Ssl, SslAlert, SslRef, SslVersion};
+use pingora::tls::ssl::{ClientHelloResponse, Ssl, SslAlert, SslRef};
 use pingora::tls::x509::X509;
 use openssl::ex_data::Index;
 use foreign_types_shared::ForeignTypeRef;
+use serde::Deserialize;
+use std::collections::HashSet;
 use std::ffi::c_void;
 use std::os::raw::{c_char, c_int};
 use std::sync::{Arc, OnceLock};
+
+#[derive(Debug, Deserialize)]
+pub struct Config {
+    pub blocked_fingerprints: HashSet<String>,
+}
+
+impl Config {
+    pub fn load(path: &str) -> Result<Self, Box<dyn std::error::Error>> {
+        let raw = std::fs::read_to_string(path)?;
+        let config: Config = serde_yaml::from_str(&raw)?;
+        Ok(config)
+    }
+}
 
 extern "C" {
     fn SSL_client_hello_get1_extensions_present(
@@ -103,7 +118,6 @@ fn client_hello_extensions(ssl: &mut SslRef) -> Vec<u16> {
     result
 }
 
-/// Globaler Index für unser ex_data Slot — einmal registriert, für alle Verbindungen gültig
 static JA3_INDEX: OnceLock<Index<Ssl, String>> = OnceLock::new();
 
 fn ja3_index() -> &'static Index<Ssl, String> {
@@ -111,13 +125,17 @@ fn ja3_index() -> &'static Index<Ssl, String> {
 }
 
 fn main() {
-    // Index einmal beim Start registrieren
     ja3_index();
+
+    let config = Config::load("config.yaml").expect("config.yaml konnte nicht geladen werden");
+    println!("Geladene Config: {:?}", config);
 
     let mut server = Server::new(None).unwrap();
     server.bootstrap();
 
-    let proxy = BotGuardProxy;
+    let proxy = BotGuardProxy {
+        config: Arc::new(config),
+    };
     let mut proxy_service = http_proxy_service(&server.configuration, proxy);
 
     proxy_service.add_tcp("0.0.0.0:8080");
@@ -191,13 +209,11 @@ impl BotGuardTls {
 
 #[async_trait]
 impl TlsAccept for BotGuardTls {
-    /// Setzt Zertifikat und Key — wird nach dem ClientHello Callback aufgerufen
     async fn certificate_callback(&self, ssl: &mut SslRef) {
         ext::ssl_use_certificate(ssl, &self.cert).unwrap();
         ext::ssl_use_private_key(ssl, &self.key).unwrap();
     }
 
-    /// Nach dem Handshake — liest Fingerprint aus ex_data und gibt ihn an die Session weiter
     async fn handshake_complete_callback(
         &self,
         ssl: &SslRef,
@@ -210,7 +226,9 @@ impl TlsAccept for BotGuardTls {
 
 pub struct RequestContext;
 
-pub struct BotGuardProxy;
+pub struct BotGuardProxy {
+    pub config: Arc<Config>,
+}
 
 #[async_trait]
 impl ProxyHttp for BotGuardProxy {
@@ -220,19 +238,39 @@ impl ProxyHttp for BotGuardProxy {
         RequestContext
     }
 
-    async fn upstream_peer(
+    async fn request_filter(
         &self,
         session: &mut Session,
         _ctx: &mut Self::CTX,
-    ) -> Result<Box<HttpPeer>> {
-        if let Some(digest) = session.digest() {
-            if let Some(ssl_digest) = &digest.ssl_digest {
-                if let Some(fingerprint) = ssl_digest.extension.get::<String>() {
-                    println!("JA3 in upstream_peer: {}", fingerprint);
-                }
-            }
+    ) -> Result<bool> {
+        let fingerprint = session
+            .digest()
+            .and_then(|d| d.ssl_digest.as_ref())
+            .and_then(|s| s.extension.get::<String>())
+            .cloned();
+
+        let Some(fp) = fingerprint else {
+            return Ok(false);
+        };
+
+        if self.config.blocked_fingerprints.contains(&fp) {
+            println!("BLOCKED — JA3 {} ist auf der Blocklist", fp);
+            session
+                .respond_error(403)
+                .await
+                .or_err(ErrorType::HTTPStatus(403), "blocked by botguard")?;
+            return Ok(true);
         }
 
+        println!("ALLOWED — JA3 {} passt durch", fp);
+        Ok(false)
+    }
+
+    async fn upstream_peer(
+        &self,
+        _session: &mut Session,
+        _ctx: &mut Self::CTX,
+    ) -> Result<Box<HttpPeer>> {
         let peer = Box::new(HttpPeer::new(
             "httpbin.org:80",
             false,

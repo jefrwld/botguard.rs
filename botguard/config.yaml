@@ -1,0 +1,4 @@
+# JA3-Hashes die geblockt werden sollen.
+# Default: curl 7.x/8.x wird geblockt — testen mit:  curl -k https://localhost:8443/get
+blocked_fingerprints:
+  - "375c6162a492dfbf2795909110ce8424"
