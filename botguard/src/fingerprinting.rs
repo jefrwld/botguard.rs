@@ -5,6 +5,17 @@ use std::ffi::c_void;
 use std::os::raw::{c_char, c_int};
 use std::sync::OnceLock;
 
+struct ClientHelloFingerprintData {
+    version: u16,
+    ciphers: Vec<u16>,
+    extensions: Vec<u16>,
+    curves: Vec<u16>,
+    point_formats: Vec<u8>,
+    signature_algorithms: Vec<u16>,
+    alpn: Option<String>,
+    sni_present: bool,
+}
+
 extern "C" {
     fn SSL_client_hello_get1_extensions_present(
         s: *mut c_void,
@@ -22,6 +33,45 @@ extern "C" {
     fn SSL_client_hello_get0_legacy_version(s: *mut c_void) -> c_int;
 
     fn CRYPTO_free(ptr: *mut c_void, file: *const c_char, line: c_int);
+}
+
+fn extract_client_hello_fingerprint_data(ssl: &mut SslRef) -> ClientHelloFingerprintData {
+    //get tls version
+    let version =
+        unsafe { SSL_client_hello_get0_legacy_version(ssl.as_ptr() as *mut c_void) } as u16;
+    //get ciphers
+    let ciphers: Vec<u16> = ssl
+        .client_hello_ciphers()
+        .map(|raw| {
+            raw.chunks(2)
+                .map(|c| u16::from_be_bytes([c[0], c[1]]))
+                .collect()
+        })
+        .unwrap_or_default();
+
+    //tls client extension
+    let extensions = client_hello_extensions(ssl);
+
+    //supported groups
+    let curves = client_hello_extension_data(ssl, 10)
+        .map(|d| parse_supported_groups(&d))
+        .unwrap_or_default();
+
+    // get point formats
+    let point_formats = client_hello_extension_data(ssl, 11)
+        .map(|d| parse_ec_point_formats(&d))
+        .unwrap_or_default();
+
+    ClientHelloFingerprintData {
+        version,
+        ciphers,
+        extensions,
+        curves,
+        point_formats,
+        signature_algorithms: Vec::new(),
+        alpn: None,
+        sni_present: false,
+    }
 }
 
 static JA3_INDEX: OnceLock<Index<Ssl, String>> = OnceLock::new();
