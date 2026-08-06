@@ -1,7 +1,9 @@
 use foreign_types_shared::ForeignTypeRef;
-use pingora::tls::ssl::SslRef;
+use openssl::ex_data::Index;
+use pingora::tls::ssl::{Ssl, SslRef};
 use std::ffi::c_void;
 use std::os::raw::{c_char, c_int};
+use std::sync::OnceLock;
 
 extern "C" {
     fn SSL_client_hello_get1_extensions_present(
@@ -22,9 +24,15 @@ extern "C" {
     fn CRYPTO_free(ptr: *mut c_void, file: *const c_char, line: c_int);
 }
 
+static JA3_INDEX: OnceLock<Index<Ssl, String>> = OnceLock::new();
+
 pub struct Ja3Fingerprint {
     pub raw: String,
     pub hash: String,
+}
+
+pub fn ja3_index() -> &'static Index<Ssl, String> {
+    JA3_INDEX.get_or_init(|| Ssl::new_ex_index().unwrap())
 }
 
 pub fn compute_ja3_from_client_hello(ssl: &mut SslRef) -> Ja3Fingerprint {
