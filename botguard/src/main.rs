@@ -9,24 +9,12 @@ use pingora::tls::ssl::{ClientHelloResponse, Ssl, SslAlert, SslRef};
 use pingora::tls::x509::X509;
 use openssl::ex_data::Index;
 use foreign_types_shared::ForeignTypeRef;
-use serde::Deserialize;
-use std::collections::HashSet;
 use std::ffi::c_void;
 use std::os::raw::{c_char, c_int};
 use std::sync::{Arc, OnceLock};
 
-#[derive(Debug, Deserialize)]
-pub struct Config {
-    pub blocked_fingerprints: HashSet<String>,
-}
-
-impl Config {
-    pub fn load(path: &str) -> Result<Self, Box<dyn std::error::Error>> {
-        let raw = std::fs::read_to_string(path)?;
-        let config: Config = serde_yaml::from_str(&raw)?;
-        Ok(config)
-    }
-}
+mod config;
+use config::Config;
 
 extern "C" {
     fn SSL_client_hello_get1_extensions_present(
