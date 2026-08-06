@@ -14,7 +14,15 @@ use std::os::raw::{c_char, c_int};
 use std::sync::{Arc, OnceLock};
 
 mod config;
+mod fingerprinting;
+
 use config::Config;
+use fingerprinting::{
+    join_u16,
+    join_u8,
+    parse_ec_point_formats,
+    parse_supported_groups,
+};
 
 extern "C" {
     fn SSL_client_hello_get1_extensions_present(
@@ -56,32 +64,6 @@ fn client_hello_extension_data(ssl: &mut SslRef, ext_type: u32) -> Option<Vec<u8
     Some(slice.to_vec())
 }
 
-fn parse_supported_groups(data: &[u8]) -> Vec<u16> {
-    if data.len() < 2 { return Vec::new(); }
-    let list_len = u16::from_be_bytes([data[0], data[1]]) as usize;
-    let list = &data[2..];
-    if list.len() < list_len { return Vec::new(); }
-    list[..list_len]
-        .chunks(2)
-        .map(|c| u16::from_be_bytes([c[0], c[1]]))
-        .collect()
-}
-
-fn parse_ec_point_formats(data: &[u8]) -> Vec<u8> {
-    if data.is_empty() { return Vec::new(); }
-    let list_len = data[0] as usize;
-    let list = &data[1..];
-    if list.len() < list_len { return Vec::new(); }
-    list[..list_len].to_vec()
-}
-
-fn join_u16(items: &[u16]) -> String {
-    items.iter().map(|x| x.to_string()).collect::<Vec<_>>().join("-")
-}
-
-fn join_u8(items: &[u8]) -> String {
-    items.iter().map(|x| x.to_string()).collect::<Vec<_>>().join("-")
-}
 
 fn client_hello_extensions(ssl: &mut SslRef) -> Vec<u16> {
     let mut out: *mut c_int = std::ptr::null_mut();
