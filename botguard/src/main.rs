@@ -1,92 +1,20 @@
 use async_trait::async_trait;
-use pingora::listeners::TlsAccept;
+use openssl::ex_data::Index;
 use pingora::listeners::tls::TlsSettings;
+use pingora::listeners::TlsAccept;
 use pingora::prelude::*;
 use pingora::proxy::{ProxyHttp, Session};
 use pingora::tls::ext;
 use pingora::tls::pkey::{PKey, Private};
 use pingora::tls::ssl::{ClientHelloResponse, Ssl, SslAlert, SslRef};
 use pingora::tls::x509::X509;
-use openssl::ex_data::Index;
-use foreign_types_shared::ForeignTypeRef;
-use std::ffi::c_void;
-use std::os::raw::{c_char, c_int};
 use std::sync::{Arc, OnceLock};
 
 mod config;
 mod fingerprinting;
 
 use config::Config;
-use fingerprinting::{
-    join_u16,
-    join_u8,
-    parse_ec_point_formats,
-    parse_supported_groups,
-};
-
-extern "C" {
-    fn SSL_client_hello_get1_extensions_present(
-        s: *mut c_void,
-        out: *mut *mut c_int,
-        outlen: *mut usize,
-    ) -> c_int;
-
-    fn SSL_client_hello_get0_ext(
-        s: *mut c_void,
-        ext_type: std::os::raw::c_uint,
-        out: *mut *const u8,
-        outlen: *mut usize,
-    ) -> c_int;
-
-    fn SSL_client_hello_get0_legacy_version(s: *mut c_void) -> c_int;
-
-    fn CRYPTO_free(ptr: *mut c_void, file: *const c_char, line: c_int);
-}
-
-fn client_hello_extension_data(ssl: &mut SslRef, ext_type: u32) -> Option<Vec<u8>> {
-    let mut out: *const u8 = std::ptr::null();
-    let mut outlen: usize = 0;
-
-    let ret = unsafe {
-        SSL_client_hello_get0_ext(
-            ssl.as_ptr() as *mut c_void,
-            ext_type,
-            &mut out,
-            &mut outlen,
-        )
-    };
-
-    if ret != 1 {
-        return None;
-    }
-
-    let slice = unsafe { std::slice::from_raw_parts(out, outlen) };
-    Some(slice.to_vec())
-}
-
-
-fn client_hello_extensions(ssl: &mut SslRef) -> Vec<u16> {
-    let mut out: *mut c_int = std::ptr::null_mut();
-    let mut outlen: usize = 0;
-
-    let ret = unsafe {
-        SSL_client_hello_get1_extensions_present(
-            ssl.as_ptr() as *mut c_void,
-            &mut out,
-            &mut outlen,
-        )
-    };
-
-    if ret != 1 {
-        return Vec::new();
-    }
-
-    let slice: &[c_int] = unsafe { std::slice::from_raw_parts(out, outlen) };
-    let result: Vec<u16> = slice.iter().map(|&id| id as u16).collect();
-    unsafe { CRYPTO_free(out as *mut c_void, std::ptr::null(), 0) };
-
-    result
-}
+use fingerprinting::compute_ja3_from_client_hello;
 
 static JA3_INDEX: OnceLock<Index<Ssl, String>> = OnceLock::new();
 
@@ -110,47 +38,15 @@ fn main() {
 
     proxy_service.add_tcp("0.0.0.0:8080");
 
-    let mut tls_settings =
-        TlsSettings::with_callbacks(Box::new(BotGuardTls::new())).unwrap();
+    let mut tls_settings = TlsSettings::with_callbacks(Box::new(BotGuardTls::new())).unwrap();
 
     tls_settings.set_client_hello_callback(|ssl: &mut SslRef, _alert: &mut SslAlert| {
-        let version =
-            unsafe { SSL_client_hello_get0_legacy_version(ssl.as_ptr() as *mut c_void) } as u16;
+        let ja3 = compute_ja3_from_client_hello(ssl);
 
-        let ciphers: Vec<u16> = ssl
-            .client_hello_ciphers()
-            .map(|raw| {
-                raw.chunks(2)
-                    .map(|c| u16::from_be_bytes([c[0], c[1]]))
-                    .collect()
-            })
-            .unwrap_or_default();
+        println!("JA3 String: {}", ja3.raw);
+        println!("JA3 Hash:   {}", ja3.hash);
 
-        let extensions = client_hello_extensions(ssl);
-
-        let curves = client_hello_extension_data(ssl, 10)
-            .map(|d| parse_supported_groups(&d))
-            .unwrap_or_default();
-
-        let point_formats = client_hello_extension_data(ssl, 11)
-            .map(|d| parse_ec_point_formats(&d))
-            .unwrap_or_default();
-
-        let ja3_string = format!(
-            "{},{},{},{},{}",
-            version,
-            join_u16(&ciphers),
-            join_u16(&extensions),
-            join_u16(&curves),
-            join_u8(&point_formats),
-        );
-
-        let ja3_hash = format!("{:x}", md5::compute(&ja3_string));
-
-        println!("JA3 String: {}", ja3_string);
-        println!("JA3 Hash:   {}", ja3_hash);
-
-        ssl.set_ex_data(*ja3_index(), ja3_hash);
+        ssl.set_ex_data(*ja3_index(), ja3.hash);
 
         Ok(ClientHelloResponse::SUCCESS)
     });
@@ -208,11 +104,7 @@ impl ProxyHttp for BotGuardProxy {
         RequestContext
     }
 
-    async fn request_filter(
-        &self,
-        session: &mut Session,
-        _ctx: &mut Self::CTX,
-    ) -> Result<bool> {
+    async fn request_filter(&self, session: &mut Session, _ctx: &mut Self::CTX) -> Result<bool> {
         let fingerprint = session
             .digest()
             .and_then(|d| d.ssl_digest.as_ref())
