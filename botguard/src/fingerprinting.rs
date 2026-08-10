@@ -86,35 +86,15 @@ pub fn ja3_index() -> &'static Index<Ssl, String> {
 }
 
 pub fn compute_ja3_from_client_hello(ssl: &mut SslRef) -> Ja3Fingerprint {
-    let version =
-        unsafe { SSL_client_hello_get0_legacy_version(ssl.as_ptr() as *mut c_void) } as u16;
-
-    let ciphers: Vec<u16> = ssl
-        .client_hello_ciphers()
-        .map(|raw| {
-            raw.chunks(2)
-                .map(|c| u16::from_be_bytes([c[0], c[1]]))
-                .collect()
-        })
-        .unwrap_or_default();
-
-    let extensions = client_hello_extensions(ssl);
-
-    let curves = client_hello_extension_data(ssl, 10)
-        .map(|d| parse_supported_groups(&d))
-        .unwrap_or_default();
-
-    let point_formats = client_hello_extension_data(ssl, 11)
-        .map(|d| parse_ec_point_formats(&d))
-        .unwrap_or_default();
+    let fingerprint_data = extract_client_hello_fingerprint_data(ssl);
 
     let raw = format!(
         "{},{},{},{},{}",
-        version,
-        join_u16(&ciphers),
-        join_u16(&extensions),
-        join_u16(&curves),
-        join_u8(&point_formats),
+        &fingerprint_data.version,
+        join_u16(&fingerprint_data.ciphers),
+        join_u16(&fingerprint_data.extensions),
+        join_u16(&fingerprint_data.curves),
+        join_u8(&fingerprint_data.point_formats),
     );
 
     let hash = format!("{:x}", md5::compute(&raw));
