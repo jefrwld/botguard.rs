@@ -62,13 +62,17 @@ fn extract_client_hello_fingerprint_data(ssl: &mut SslRef) -> ClientHelloFingerp
         .map(|d| parse_ec_point_formats(&d))
         .unwrap_or_default();
 
+    let signature_algorithms = client_hello_extension_data(ssl, 13)
+        .map(|d| parse_signature_algorithms(&d))
+        .unwrap_or_default();
+
     ClientHelloFingerprintData {
         version,
         ciphers,
         extensions,
         curves,
         point_formats,
-        signature_algorithms: Vec::new(),
+        signature_algorithms,
         alpn: None,
         sni_present: false,
     }
@@ -143,6 +147,23 @@ pub fn parse_supported_groups(data: &[u8]) -> Vec<u16> {
     }
     let list_len = u16::from_be_bytes([data[0], data[1]]) as usize;
     let list = &data[2..];
+    if list.len() < list_len {
+        return Vec::new();
+    }
+    list[..list_len]
+        .chunks(2)
+        .map(|c| u16::from_be_bytes([c[0], c[1]]))
+        .collect()
+}
+
+pub fn parse_signature_algorithms(data: &[u8]) -> Vec<u16> {
+
+    if data.len() < 2 {
+        return Vec::new();
+    }
+    let list_len = u16::from_be_bytes([data[0], data[1]]) as usize;
+    let list = &data[2..];
+
     if list.len() < list_len {
         return Vec::new();
     }
