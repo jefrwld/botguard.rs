@@ -36,10 +36,9 @@ extern "C" {
 }
 
 fn extract_client_hello_fingerprint_data(ssl: &mut SslRef) -> ClientHelloFingerprintData {
-    //get tls version
     let version =
         unsafe { SSL_client_hello_get0_legacy_version(ssl.as_ptr() as *mut c_void) } as u16;
-    //get ciphers
+
     let ciphers: Vec<u16> = ssl
         .client_hello_ciphers()
         .map(|raw| {
@@ -49,15 +48,12 @@ fn extract_client_hello_fingerprint_data(ssl: &mut SslRef) -> ClientHelloFingerp
         })
         .unwrap_or_default();
 
-    //tls client extension
     let extensions = client_hello_extensions(ssl);
 
-    //supported groups
     let curves = client_hello_extension_data(ssl, 10)
         .map(|d| parse_supported_groups(&d))
         .unwrap_or_default();
 
-    // get point formats
     let point_formats = client_hello_extension_data(ssl, 11)
         .map(|d| parse_ec_point_formats(&d))
         .unwrap_or_default();
@@ -66,6 +62,9 @@ fn extract_client_hello_fingerprint_data(ssl: &mut SslRef) -> ClientHelloFingerp
         .map(|d| parse_signature_algorithms(&d))
         .unwrap_or_default();
 
+    let alpn = client_hello_extension_data(ssl, 16).and_then(|d| parse_alpn(&d));
+    let sni_present = extensions.contains(&0);
+
     ClientHelloFingerprintData {
         version,
         ciphers,
@@ -73,8 +72,8 @@ fn extract_client_hello_fingerprint_data(ssl: &mut SslRef) -> ClientHelloFingerp
         curves,
         point_formats,
         signature_algorithms,
-        alpn: None,
-        sni_present: false,
+        alpn,
+        sni_present,
     }
 }
 
@@ -94,7 +93,7 @@ pub fn compute_ja3_from_client_hello(ssl: &mut SslRef) -> Ja3Fingerprint {
 
     let raw = format!(
         "{},{},{},{},{}",
-        &fingerprint_data.version,
+        fingerprint_data.version,
         join_u16(&fingerprint_data.ciphers),
         join_u16(&fingerprint_data.extensions),
         join_u16(&fingerprint_data.curves),
@@ -156,8 +155,36 @@ pub fn parse_supported_groups(data: &[u8]) -> Vec<u16> {
         .collect()
 }
 
-pub fn parse_signature_algorithms(data: &[u8]) -> Vec<u16> {
+pub fn parse_alpn(data: &[u8]) -> Option<String> {
+    if data.len() < 2 {
+        return None;
+    }
 
+    let list_len = u16::from_be_bytes([data[0], data[1]]) as usize;
+    let list = &data[2..];
+    if list.len() < list_len {
+        return None;
+    }
+
+    let protocols = &list[..list_len];
+    if protocols.is_empty() {
+        return None;
+    }
+
+    let first_len = protocols[0] as usize;
+    let first_start = 1;
+    let first_end = first_start + first_len;
+
+    if protocols.len() < first_end {
+        return None;
+    }
+
+    std::str::from_utf8(&protocols[first_start..first_end])
+        .ok()
+        .map(|protocol| protocol.to_string())
+}
+
+pub fn parse_signature_algorithms(data: &[u8]) -> Vec<u16> {
     if data.len() < 2 {
         return Vec::new();
     }
