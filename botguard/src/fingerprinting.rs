@@ -229,6 +229,7 @@ pub fn join_u8(items: &[u8]) -> String {
 }
 
 pub fn is_grease(items: u16) -> bool {
+
     let parts = items.to_be_bytes();
     let high_byte = parts[0];
     let low_byte = parts[1];
@@ -236,6 +237,10 @@ pub fn is_grease(items: u16) -> bool {
 
     // GREASE values repeat the same byte and end in the A nibble.
     high_byte == low_byte && low_nibble == 0x0a
+}
+
+pub fn hex_converter(items: Vec<u16>) -> String {
+   let hex_without_grease  =  items.iter().filter(|value |!is_grease(**value));
 }
 
 
