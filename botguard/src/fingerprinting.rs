@@ -227,3 +227,28 @@ pub fn join_u8(items: &[u8]) -> String {
         .collect::<Vec<_>>()
         .join("-")
 }
+
+pub fn is_grease(items: u16) -> bool {
+    let parts = items.to_be_bytes();
+    let high_byte = parts[0];
+    let low_byte = parts[1];
+    let low_nibble = low_byte & 0x0f;
+
+    // GREASE values repeat the same byte and end in the A nibble.
+    high_byte == low_byte && low_nibble == 0x0a
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
