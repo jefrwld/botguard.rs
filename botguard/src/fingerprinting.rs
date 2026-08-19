@@ -1,11 +1,10 @@
 use foreign_types_shared::ForeignTypeRef;
 use openssl::ex_data::Index;
 use pingora::tls::ssl::{Ssl, SslRef};
+use sha2::{Digest, Sha256};
 use std::ffi::c_void;
-use std::fmt::format;
 use std::os::raw::{c_char, c_int};
 use std::sync::OnceLock;
-use std::u16;
 
 struct ClientHelloFingerprintData {
     version: u16,
@@ -231,7 +230,6 @@ pub fn join_u8(items: &[u8]) -> String {
 }
 
 pub fn is_grease(items: u16) -> bool {
-
     let parts = items.to_be_bytes();
     let high_byte = parts[0];
     let low_byte = parts[1];
@@ -241,28 +239,43 @@ pub fn is_grease(items: u16) -> bool {
     high_byte == low_byte && low_nibble == 0x0a
 }
 
-pub fn hex_converter(items: &[u16]) -> String {
+pub fn hex_converter(items: &[u16], sort: bool) -> String {
+    let mut values = items
+        .iter()
+        .copied()
+        .filter(|value| !is_grease(*value))
+        .collect::<Vec<_>>();
 
-   items
-       .iter()
-       .copied()
-       .filter(|value |!is_grease(*value))
-       .map(|value|format!("{:04x}", value))
-       .collect::<Vec<_>>()
-       .join(",")
+    if sort {
+        values.sort();
+    }
+
+    values
+        .iter()
+        .map(|value| format!("{:04x}", value))
+        .collect::<Vec<_>>()
+        .join(",")
 }
 
+pub fn ja4_extensions_hex(extensions: &[u16]) -> String {
+    let mut values = extensions
+        .iter()
+        .copied()
+        // Remove SNI, ALPN, and GREASE from the JA4 extension hash input.
+        .filter(|value| !is_grease(*value) && *value != 0 && *value != 16)
+        .collect::<Vec<_>>();
 
+    values.sort();
 
+    values
+        .iter()
+        .map(|value| format!("{:04x}", value))
+        .collect::<Vec<_>>()
+        .join(",")
+}
 
-
-
-
-
-
-
-
-
-
-
-
+pub fn sha256_12(input: &str) -> String {
+    let digest = Sha256::digest(input.as_bytes());
+    let hash = format!("{:x}", digest);
+    hash[..12].to_string()
+}
