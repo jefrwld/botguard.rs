@@ -2,8 +2,10 @@ use foreign_types_shared::ForeignTypeRef;
 use openssl::ex_data::Index;
 use pingora::tls::ssl::{Ssl, SslRef};
 use std::ffi::c_void;
+use std::fmt::format;
 use std::os::raw::{c_char, c_int};
 use std::sync::OnceLock;
+use std::u16;
 
 struct ClientHelloFingerprintData {
     version: u16,
@@ -239,8 +241,15 @@ pub fn is_grease(items: u16) -> bool {
     high_byte == low_byte && low_nibble == 0x0a
 }
 
-pub fn hex_converter(items: Vec<u16>) -> String {
-   let hex_without_grease  =  items.iter().filter(|value |!is_grease(**value));
+pub fn hex_converter(items: &[u16]) -> String {
+
+   items
+       .iter()
+       .copied()
+       .filter(|value |!is_grease(*value))
+       .map(|value|format!("{:04x}", value))
+       .collect::<Vec<_>>()
+       .join(",")
 }
 
 
