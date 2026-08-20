@@ -279,3 +279,57 @@ pub fn sha256_12(input: &str) -> String {
     let hash = format!("{:x}", digest);
     hash[..12].to_string()
 }
+
+// calculate hash of ciphers
+fn ja4_cipher_hash(data: &ClientHelloFingerprintData) -> String {
+    let cipher_hex = hex_converter(&data.ciphers, true);
+    //return hashed hex ciphers
+    sha256_12(&cipher_hex)
+}
+
+fn ja4_extensions_hash(data: &ClientHelloFingerprintData) -> String {
+    let ja4_extension_hex = ja4_extensions_hex(&data.extensions);
+    let signature_hex = hex_converter(&data.signature_algorithms, false);
+    let input: String;
+
+    if signature_hex.is_empty() {
+        input = ja4_extension_hex;
+    } else {
+        input = ja4_extension_hex + "_" + &signature_hex;
+    }
+
+    sha256_12(&input)
+}
+
+fn ja4_prefix(data: &ClientHelloFingerprintData) -> String {
+    /**   t + version + sni_flag + cipher_count + extension_count + alpn_code **/
+    let version = data.version;
+    let sni_flag = data.sni_present;
+    let cipher_count = data
+        .ciphers
+        .iter()
+        .copied()
+        .filter(|x| !is_grease(*x))
+        .count();
+    let extension_count = data
+        .extensions
+        .iter()
+        .copied()
+        .filter(|x| !is_grease(*x))
+        .count();
+    let alpn_code = ja4_alpn_code(data.alpn.as_deref());
+}
+
+fn ja4_alpn_code(alpn: Option<&str>) -> String {
+    let Some(alpn) = alpn else {
+        return "00".to_string();
+    };
+
+    let mut chars = alpn.chars();
+    let Some(first) = chars.next() else {
+        return "00".to_string();
+    };
+    let last = chars.last().unwrap_or(first);
+
+    format!("{}{}", first, last)
+}
