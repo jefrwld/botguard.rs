@@ -10,7 +10,7 @@ mod fingerprinting;
 mod tls;
 
 use config::Config;
-use fingerprinting::{compute_ja3_from_client_hello, ja3_index};
+use fingerprinting::{compute_ja3_from_client_hello, compute_ja4_from_client_hello, ja3_index};
 use tls::BotGuardTls;
 
 fn main() {
@@ -36,6 +36,9 @@ fn main() {
 
         println!("JA3 String: {}", ja3.raw);
         println!("JA3 Hash:   {}", ja3.hash);
+
+        let ja4 = compute_ja4_from_client_hello(ssl);
+        println!("JA4 String: {}", ja4.raw);
 
         ssl.set_ex_data(*ja3_index(), ja3.hash);
 

@@ -8,6 +8,7 @@ use std::sync::OnceLock;
 
 struct ClientHelloFingerprintData {
     version: u16,
+    supported_versions: Vec<u16>,
     ciphers: Vec<u16>,
     extensions: Vec<u16>,
     curves: Vec<u16>,
@@ -40,6 +41,10 @@ fn extract_client_hello_fingerprint_data(ssl: &mut SslRef) -> ClientHelloFingerp
     let version =
         unsafe { SSL_client_hello_get0_legacy_version(ssl.as_ptr() as *mut c_void) } as u16;
 
+    let supported_versions = client_hello_extension_data(ssl, 43)
+        .map(|d| parse_supported_versions(&d))
+        .unwrap_or_default();
+
     let ciphers: Vec<u16> = ssl
         .client_hello_ciphers()
         .map(|raw| {
@@ -68,6 +73,7 @@ fn extract_client_hello_fingerprint_data(ssl: &mut SslRef) -> ClientHelloFingerp
 
     ClientHelloFingerprintData {
         version,
+        supported_versions,
         ciphers,
         extensions,
         curves,
@@ -83,6 +89,10 @@ static JA3_INDEX: OnceLock<Index<Ssl, String>> = OnceLock::new();
 pub struct Ja3Fingerprint {
     pub raw: String,
     pub hash: String,
+}
+
+pub struct Ja4Fingerprint {
+    pub raw: String,
 }
 
 pub fn ja3_index() -> &'static Index<Ssl, String> {
@@ -104,6 +114,18 @@ pub fn compute_ja3_from_client_hello(ssl: &mut SslRef) -> Ja3Fingerprint {
     let hash = format!("{:x}", md5::compute(&raw));
 
     Ja3Fingerprint { raw, hash }
+}
+
+pub fn compute_ja4_from_client_hello(ssl: &mut SslRef) -> Ja4Fingerprint {
+    let fingerprint_data = extract_client_hello_fingerprint_data(ssl);
+    let raw = format!(
+        "{}_{}_{}",
+        ja4_prefix(&fingerprint_data),
+        ja4_cipher_hash(&fingerprint_data),
+        ja4_extensions_hash(&fingerprint_data),
+    );
+
+    Ja4Fingerprint { raw }
 }
 
 fn client_hello_extension_data(ssl: &mut SslRef, ext_type: u32) -> Option<Vec<u8>> {
@@ -197,6 +219,24 @@ pub fn parse_signature_algorithms(data: &[u8]) -> Vec<u16> {
     }
     list[..list_len]
         .chunks(2)
+        .map(|c| u16::from_be_bytes([c[0], c[1]]))
+        .collect()
+}
+
+pub fn parse_supported_versions(data: &[u8]) -> Vec<u16> {
+    if data.is_empty() {
+        return Vec::new();
+    }
+
+    let list_len = data[0] as usize;
+    let list = &data[1..];
+
+    if list.len() < list_len {
+        return Vec::new();
+    }
+
+    list[..list_len]
+        .chunks_exact(2)
         .map(|c| u16::from_be_bytes([c[0], c[1]]))
         .collect()
 }
@@ -303,8 +343,22 @@ fn ja4_extensions_hash(data: &ClientHelloFingerprintData) -> String {
 
 fn ja4_prefix(data: &ClientHelloFingerprintData) -> String {
     /**   t + version + sni_flag + cipher_count + extension_count + alpn_code **/
-    let version = data.version;
-    let sni_flag = data.sni_present;
+    let tls_version = data
+        .supported_versions
+        .iter()
+        .copied()
+        .filter(|value| !is_grease(*value))
+        .max()
+        .unwrap_or(data.version);
+
+    let version = match tls_version {
+        0x0304 => "13",
+        0x0303 => "12",
+        0x0302 => "11",
+        0x0301 => "10",
+        _ => "00",
+    };
+    let sni_flag = if data.sni_present { "d" } else { "i" };
     let cipher_count = data
         .ciphers
         .iter()
@@ -318,6 +372,11 @@ fn ja4_prefix(data: &ClientHelloFingerprintData) -> String {
         .filter(|x| !is_grease(*x))
         .count();
     let alpn_code = ja4_alpn_code(data.alpn.as_deref());
+
+    format!(
+        "t{}{}{:02}{:02}{}",
+        version, sni_flag, cipher_count, extension_count, alpn_code
+    )
 }
 
 fn ja4_alpn_code(alpn: Option<&str>) -> String {
