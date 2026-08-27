@@ -342,7 +342,7 @@ fn ja4_extensions_hash(data: &ClientHelloFingerprintData) -> String {
 }
 
 fn ja4_prefix(data: &ClientHelloFingerprintData) -> String {
-    /**   t + version + sni_flag + cipher_count + extension_count + alpn_code **/
+    // t + version + sni_flag + cipher_count + extension_count + alpn_code
     let tls_version = data
         .supported_versions
         .iter()
@@ -391,4 +391,79 @@ fn ja4_alpn_code(alpn: Option<&str>) -> String {
     let last = chars.last().unwrap_or(first);
 
     format!("{}{}", first, last)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_supported_groups_from_tls_extension_data() {
+        let data = [0x00, 0x06, 0x00, 0x1d, 0x00, 0x17, 0x00, 0x18];
+
+        assert_eq!(parse_supported_groups(&data), vec![29, 23, 24]);
+    }
+
+    #[test]
+    fn parses_signature_algorithms_from_tls_extension_data() {
+        let data = [0x00, 0x04, 0x04, 0x03, 0x08, 0x04];
+
+        assert_eq!(parse_signature_algorithms(&data), vec![0x0403, 0x0804]);
+    }
+
+    #[test]
+    fn parses_supported_versions_from_tls_extension_data() {
+        let data = [0x04, 0x03, 0x04, 0x03, 0x03];
+
+        assert_eq!(parse_supported_versions(&data), vec![0x0304, 0x0303]);
+    }
+
+    #[test]
+    fn parses_first_alpn_protocol() {
+        let data = [
+            0x00, 0x0c, 0x02, b'h', b'2', 0x08, b'h', b't', b't', b'p', b'/', b'1', b'.', b'1',
+        ];
+
+        assert_eq!(parse_alpn(&data), Some("h2".to_string()));
+    }
+
+    #[test]
+    fn detects_grease_values() {
+        assert!(is_grease(0x0a0a));
+        assert!(is_grease(0x1a1a));
+        assert!(!is_grease(0x0304));
+        assert!(!is_grease(0x1301));
+    }
+
+    #[test]
+    fn converts_to_hex_filters_grease_and_sorts_when_requested() {
+        let values = [0x1302, 0x0a0a, 0x1301];
+
+        assert_eq!(hex_converter(&values, true), "1301,1302");
+        assert_eq!(hex_converter(&values, false), "1302,1301");
+    }
+
+    #[test]
+    fn ja4_extension_hex_filters_sni_alpn_and_grease() {
+        let extensions = [0, 10, 16, 13, 43, 0x0a0a];
+
+        assert_eq!(ja4_extensions_hex(&extensions), "000a,000d,002b");
+    }
+
+    #[test]
+    fn ja4_prefix_prefers_supported_versions_over_legacy_version() {
+        let data = ClientHelloFingerprintData {
+            version: 0x0303,
+            supported_versions: vec![0x0303, 0x0304],
+            ciphers: vec![0x1301, 0x1302, 0x0a0a],
+            extensions: vec![0, 10, 16, 43, 0x0a0a],
+            curves: vec![],
+            point_formats: vec![],
+            signature_algorithms: vec![],
+            alpn: Some("h2".to_string()),
+            sni_present: true,
+        };
+
+        assert_eq!(ja4_prefix(&data), "t13d0204h2");
+    }
 }
